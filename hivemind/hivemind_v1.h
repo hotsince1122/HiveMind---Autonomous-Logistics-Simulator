@@ -13,6 +13,6 @@ class HiveMindV1 {
 
     public:
 
-        static std::vector<DeliveryPlan> decide (Map& map, std::vector<std::unique_ptr<Agent>>& agents,
+        static std::vector<Route> decide (Map& map, std::vector<std::unique_ptr<Agent>>& agents,
             std::vector<std::shared_ptr<Package>>& packages, int currentTick);
 };

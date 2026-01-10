@@ -31,6 +31,9 @@ void Map::loadMap (std::vector<std::vector<CellType>> newGrid) {
                 case CellType::STATION:
                     stations.push_back({i, j});
                     break;
+                case CellType::ROAD:
+                case CellType::WALL:
+                    break;
                 default:
                     throw out_of_range("Error: No cell type");
                     break;

@@ -9,10 +9,10 @@ struct HiveMindConfig {
 };
 
 
-std::vector<DeliveryPlan> HiveMindV1::decide (Map& map, std::vector<std::unique_ptr<Agent>>& agents,
+std::vector<Route> HiveMindV1::decide (Map& map, std::vector<std::unique_ptr<Agent>>& agents,
     std::vector<std::shared_ptr<Package>>& packages, int currentTick) {
 
-    std::vector<DeliveryPlan> deliveryPlans (packages.size());       //fac lista de rute pentru ficare pachet initializata cu o valoare speciala
+    std::vector<Route> deliveryPlans (packages.size());       //fac lista de rute pentru ficare pachet initializata cu o valoare speciala
 
     HiveMindConfig HMConfig;
 

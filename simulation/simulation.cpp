@@ -1,8 +1,5 @@
 #include "simulation.h"
-#include "../agents/agent.h"
-#include "../agents/drone.h"
-#include "../agents/robot.h"
-#include "../agents/scooter.h"
+#include "../agents/agent_factory.h"
 #include "../orders/package_manager.h"
 #include "../navigation/navigation.h"
 
@@ -10,6 +7,8 @@
 #include <thread>
 #include <utility>
 #include <iostream>
+#include <algorithm>
+#include <fstream>
 
 Simulation::Simulation (Map& newMap, const Config& configs) : map(newMap) {
     maxTicks = configs.getMaxTicks();
@@ -30,8 +29,6 @@ void Simulation::spawnPackagesIfNeeded (std::mt19937& gen, const std::vector<std
 void Simulation::updatePackages() {
     for (auto& p : packages) {
         if (p->getStatus() == PackageStatus::DELIVERED) {
-            // Verificăm dacă a fost întârziat (fără să stricăm statusul DELIVERED încă)
-            // Presupunem că ai o metodă care doar verifică timpul, fără side-effects
             if (currentTick > p->getSpawnTick() + p->getDeadline()) {
                 totalProfit -= 50;
                 lateCount++;
@@ -39,9 +36,7 @@ void Simulation::updatePackages() {
                 totalProfit += p->getReward();
                 deliveredCount++;
             }
-            
-            // Îl marcăm pentru ștergere (folosim un status special sau 
-            // ne asigurăm că remove_if îl vede)
+
         }
     }
 
@@ -50,7 +45,7 @@ void Simulation::updatePackages() {
         std::remove_if(packages.begin(), packages.end(),
             [](const std::shared_ptr<Package>& p) {
                 return p->getStatus() == PackageStatus::DELIVERED || 
-                       p->getStatus() == PackageStatus::EXPIRED; // <--- Șterge și resturile
+                       p->getStatus() == PackageStatus::EXPIRED;
             }
         ),
         packages.end()
@@ -60,51 +55,26 @@ void Simulation::updatePackages() {
 void Simulation::spawnAgentFleet(const Config& configs, std::pair<int, int> hub) { 
 
     for (int i = 0; i < configs.getDrones(); i++)
-        agents.push_back(std::make_unique<Drone>(hub));
+        agents.push_back(AgentFactory::createAgent(AgentType::DRONE, hub));
     for (int i = 0; i < configs.getRobots(); i++)
-        agents.push_back(std::make_unique<Robot>(hub));
+        agents.push_back(AgentFactory::createAgent(AgentType::ROBOT, hub));
     for (int i = 0; i < configs.getScooters(); i++)
-        agents.push_back(std::make_unique<Scooter>(hub));
+        agents.push_back(AgentFactory::createAgent(AgentType::SCOOTER, hub));
 };
 
-void Simulation::updateAgents (std::vector<DeliveryPlan> deliveryPlans) {
+void Simulation::updateAgents (std::vector<Route> deliveryPlans, std::vector<Route> returnPlans) {
 
     for (auto plan : deliveryPlans)
         if(plan.agentIdx != -1 && plan.packageIdx != -1) {
             agents[plan.agentIdx]->assignPackage(packages[plan.packageIdx]);
             agents[plan.agentIdx]->assignPath(plan.path);
         }
+    
+    for (auto plan : returnPlans)
+        agents[plan.agentIdx]->assignPath(plan.path);
 
-    for (auto& a : agents) {
-        if(!a->isAlive())
-            continue;
-
-        CellType currentCell = map.getCell(a->getMapPos());
-        bool onChargingSpot = (currentCell == CellType::HUB || currentCell == CellType::STATION);
-        
-        if(a->isIdle() && !a->hasPackages() && !onChargingSpot) {
-
-            std::vector<std::pair<int, int>> safeSpots = map.getStations();
-            safeSpots.push_back(map.getHubPosition());
-
-            std::vector<std::pair<int, int>> bestPath;
-            int minPathSize = 9999999;
-
-            for (const auto& spot : safeSpots) {
-                auto path = Navigation::getPath(map, a->getMapPos(), spot, *a);
-                if (!path.empty() && (int)path.size() < minPathSize) {
-                    minPathSize = path.size();
-                    bestPath = path;
-                }
-            }
-
-            if (!bestPath.empty())
-                a->assignPath(bestPath);
-        }
-
-        a->tick(map.getCell(a->getMapPos()));
-
-    }
+    for (auto& agent : agents)
+        agent->tick(map.getCell(agent->getMapPos()));
 }
 
 void Simulation::run (const Config& configs) {
@@ -121,9 +91,10 @@ void Simulation::run (const Config& configs) {
         
         updatePackages();
         
-        std::vector<DeliveryPlan> deliveryPlans = hiveMind.decide (map, agents, packages, currentTick);
-
-        updateAgents(deliveryPlans);
+        std::vector<Route> deliveryPlans = hiveMind.decideDelivery (map, agents, packages, currentTick);
+        std::vector<Route> returnPlans = hiveMind.decideReturn (map, agents);
+        
+        updateAgents(deliveryPlans, returnPlans);
 
         //---Aici afisam statistici live + harta cu agentii pe ea---
         std::cout << "\033[2J\033[1;1H";
@@ -175,7 +146,7 @@ void Simulation::run (const Config& configs) {
             std::cout << std::endl;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     for (auto& p : packages) {
@@ -194,10 +165,59 @@ void Simulation::run (const Config& configs) {
 
     double succesRate = (totalPackages > 0) ? deliveredCount / static_cast<double> (totalPackages) : 0.0;
 
+    for(auto& agent : agents)
+        if (agent->getState() == AgentState::DEAD)  deadAgents++;
+
+    std::ofstream reportFile("simulation.txt");
+    
+    if (reportFile.is_open()) {
+        reportFile << "=========================================\n";
+        reportFile << "   HIVEMIND SIMULATION REPORT\n";
+        reportFile << "=========================================\n\n";
+        
+        reportFile << "CONFIGURATION:\n";
+        reportFile << "  Map Size: " << configs.getMapSize().first << "x" << configs.getMapSize().second << "\n";
+        reportFile << "  Total Ticks: " << maxTicks << "\n";
+        reportFile << "  Fleet Composition:\n";
+        reportFile << "    - Drones: " << configs.getDrones() << "\n";
+        reportFile << "    - Robots: " << configs.getRobots() << "\n";
+        reportFile << "    - Scooters: " << configs.getScooters() << "\n\n";
+        
+        reportFile << "SIMULATION RESULTS:\n";
+        reportFile << "  Total Packages: " << totalPackages << "\n";
+        reportFile << "  Delivered on Time: " << deliveredCount << "\n";
+        reportFile << "  Delivered Late: " << lateCount << "\n";
+        reportFile << "  Undelivered: " << unDeliveredCount << "\n";
+        reportFile << "  Success Rate: " << (succesRate * 100) << "%\n\n";
+        
+        reportFile << "FLEET STATUS:\n";
+        reportFile << "  Dead Agents: " << deadAgents << "\n";
+        reportFile << "  Surviving Agents: " << (agents.size() - deadAgents) << "\n\n";
+        
+        reportFile << "FINANCIAL SUMMARY:\n";
+        reportFile << "  Total Profit: " << totalProfit << " credits\n";
+        
+        if (totalProfit > 0)
+            reportFile << "  Status: PROFITABLE :D\n";
+        else
+            reportFile << "  Status: LOSS :(\n";
+        
+        reportFile << "\n=========================================\n";
+        reportFile << "  End of Report\n";
+        reportFile << "=========================================\n";
+        
+        reportFile.close();
+        
+        std::cout << "\n[INFO] Simulation report saved to 'simulation.txt'\n";
+    } else {
+        std::cerr << "\n[ERROR] Could not create simulation.txt file\n";
+    }
+
     std::cout << "\n=== SIMULATION ENDED ===" << std::endl;
     std::cout << "Total packages: " << totalPackages << std::endl;
     std::cout << "Total profit: " << totalProfit << std::endl;
     std::cout << "Total delivered in time: " << deliveredCount << std::endl;
     std::cout << "Total delivered late: " << lateCount << std::endl;
     std::cout << "Package delivered success rate: " << succesRate << std::endl;
+    std::cout << "Dead agents: " << deadAgents << std::endl;
 }

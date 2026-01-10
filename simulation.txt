@@ -1,0 +1,30 @@
+=========================================
+   HIVEMIND SIMULATION REPORT
+=========================================
+
+CONFIGURATION:
+  Map Size: 20x20
+  Total Ticks: 700
+  Fleet Composition:
+    - Drones: 3
+    - Robots: 2
+    - Scooters: 1
+
+SIMULATION RESULTS:
+  Total Packages: 50
+  Delivered on Time: 40
+  Delivered Late: 10
+  Undelivered: 0
+  Success Rate: 80%
+
+FLEET STATUS:
+  Dead Agents: 1
+  Surviving Agents: 5
+
+FINANCIAL SUMMARY:
+  Total Profit: 16239 credits
+  Status: PROFITABLE ✓
+
+=========================================
+  End of Report
+=========================================
